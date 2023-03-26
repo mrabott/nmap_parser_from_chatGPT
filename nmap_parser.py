@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import nmap
 import sqlite3
 import sys
@@ -38,16 +40,16 @@ def create_database() -> sqlite3.Connection:
 
 def store_results(conn: sqlite3.Connection, ip: str, host_name: str, os_name: str, ports: List[Dict[str, Any]]) -> None:
     """Store parsed nmap scan results in the SQLite database."""
-
     c = conn.cursor()
-    c.execute("INSERT INTO hosts (ip_address, host_name, os_name) VALUES (?, ?, ?)", (ip, host_name, os_name))
+    SQL_CMD = f"INSERT INTO hosts (ip_address, host_name, os_name) VALUES ('{ip}', '{host_name}', '{os_name}')"
+    print(SQL_CMD)
+    c.execute(SQL_CMD)
     host_id = c.lastrowid
 
     for port in ports:
-        c.execute(
-            "INSERT INTO ports (host_id, port_number, state, service_name) VALUES (?, ?, ?, ?)",
-            (host_id, port["port"], port["state"], port["service"]),
-        )
+        SQL_CMD = f"INSERT INTO ports (host_id, port_number, state, service_name) VALUES ('{host_id}', '{port['port']}', '{port['state']}','{port['service']}')"
+        c.execute(SQL_CMD,)
+        print(SQL_CMD)
     conn.commit()
 
 
@@ -76,9 +78,11 @@ def parse_nmap_results(nmap_results: nmap.PortScanner) -> List[Dict[str, Any]]:
             "ports": [],
         }
 
-        for port_info in nmap_results[host]["tcp"].values():
+        for port in nmap_results[host]["tcp"]:
+            port_info=nmap_results[host]['tcp'][port]
+
             host_info["ports"].append({
-                "port": port_info["portid"],
+                "port": port,
                 "state": port_info["state"],
                 "service": port_info["name"],
             })
@@ -86,7 +90,6 @@ def parse_nmap_results(nmap_results: nmap.PortScanner) -> List[Dict[str, Any]]:
         parsed_results.append(host_info)
 
     return parsed_results
-
 
 # Main function
 def main() -> None:
@@ -99,7 +102,7 @@ def main() -> None:
 
     nmap_results = nmap_scan(ip_addresses, ports)
     parsed_results = parse_nmap_results(nmap_results)
-
+    #print (parsed_results)
     conn = create_database()
 
     for host_info in parsed_results:
