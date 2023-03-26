@@ -1,9 +1,13 @@
 import nmap
 import sqlite3
 import sys
+from typing import List, Dict, Any
+
 
 # Database setup
-def create_database():
+def create_database() -> sqlite3.Connection:
+    """Create SQLite database and tables to store scan results."""
+
     conn = sqlite3.connect("nmap_results.db")
     c = conn.cursor()
     c.execute(
@@ -32,7 +36,9 @@ def create_database():
     return conn
 
 
-def store_results(conn, ip, host_name, os_name, ports):
+def store_results(conn: sqlite3.Connection, ip: str, host_name: str, os_name: str, ports: List[Dict[str, Any]]) -> None:
+    """Store parsed nmap scan results in the SQLite database."""
+
     c = conn.cursor()
     c.execute("INSERT INTO hosts (ip_address, host_name, os_name) VALUES (?, ?, ?)", (ip, host_name, os_name))
     host_id = c.lastrowid
@@ -46,7 +52,9 @@ def store_results(conn, ip, host_name, os_name, ports):
 
 
 # Nmap scan and parsing
-def nmap_scan(ip_addresses, ports):
+def nmap_scan(ip_addresses: List[str], ports: List[str]) -> nmap.PortScanner:
+    """Perform nmap scan on the given IP addresses and ports."""
+
     nm = nmap.PortScanner()
     scan_range = ",".join(ip_addresses)
     port_range = ",".join(ports)
@@ -55,7 +63,9 @@ def nmap_scan(ip_addresses, ports):
     return nm
 
 
-def parse_nmap_results(nmap_results):
+def parse_nmap_results(nmap_results: nmap.PortScanner) -> List[Dict[str, Any]]:
+    """Parse nmap scan results and return a list of dictionaries containing the required information."""
+
     parsed_results = []
 
     for host in nmap_results.all_hosts():
@@ -79,7 +89,7 @@ def parse_nmap_results(nmap_results):
 
 
 # Main function
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         print("Usage: nmap_parser.py <comma-separated ip addresses> <comma-separated ports>")
         sys.exit(1)
