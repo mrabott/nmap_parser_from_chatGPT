@@ -1,116 +1,129 @@
-#!/usr/bin/python3
-
 import nmap
+import pyodbc
 import sqlite3
-import sys
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 
-# Database setup
-def create_database() -> sqlite3.Connection:
-    """Create SQLite database and tables to store scan results."""
+class DatabaseManager:
+    def __init__(self, db_name: str):
+        self.conn = sqlite3.connect(db_name)
+        self.create_tables()
 
-    conn = sqlite3.connect("nmap_results.db")
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS hosts (
-            id INTEGER PRIMARY KEY,
-            ip_address TEXT,
-            host_name TEXT,
-            os_name TEXT
-        );
-        """
-    )
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ports (
-            id INTEGER PRIMARY KEY,
-            host_id INTEGER,
-            port_number INTEGER,
-            state TEXT,
-            service_name TEXT,
-            FOREIGN KEY (host_id) REFERENCES hosts (id)
-        );
-        """
-    )
-    conn.commit()
-    return conn
+    def create_tables(self) -> None:
+        c = self.conn.cursor()
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hosts (
+                id INTEGER PRIMARY KEY,
+                ip_address TEXT,
+                host_name TEXT,
+                os_name TEXT
+            );
+            """
+        )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ports (
+                id INTEGER PRIMARY KEY,
+                host_id INTEGER,
+                port_number INTEGER,
+                state TEXT,
+                service_name TEXT,
+                FOREIGN KEY (host_id) REFERENCES hosts (id)
+            );
+            """
+        )
+        self.conn.commit()
 
+    def store_results(self, ip: str, host_name: str, os_name: str, ports: List[Dict[str, Any]]) -> None:
+        c = self.conn.cursor()
+        c.execute("INSERT INTO hosts (ip_address, host_name, os_name) VALUES (?, ?, ?)", (ip, host_name, os_name))
+        host_id = c.lastrowid
 
-def store_results(conn: sqlite3.Connection, ip: str, host_name: str, os_name: str, ports: List[Dict[str, Any]]) -> None:
-    """Store parsed nmap scan results in the SQLite database."""
-    c = conn.cursor()
-    SQL_CMD = f"INSERT INTO hosts (ip_address, host_name, os_name) VALUES ('{ip}', '{host_name}', '{os_name}')"
-    print(SQL_CMD)
-    c.execute(SQL_CMD)
-    host_id = c.lastrowid
+        for port in ports:
+            c.execute(
+                "INSERT INTO ports (host_id, port_number, state, service_name) VALUES (?, ?, ?, ?)",
+                (host_id, port["port"], port["state"], port["service"]),
+            )
+        self.conn.commit()
 
-    for port in ports:
-        SQL_CMD = f"INSERT INTO ports (host_id, port_number, state, service_name) VALUES ('{host_id}', '{port['port']}', '{port['state']}','{port['service']}')"
-        c.execute(SQL_CMD,)
-        print(SQL_CMD)
-    conn.commit()
-
-
-# Nmap scan and parsing
-def nmap_scan(ip_addresses: List[str], ports: List[str]) -> nmap.PortScanner:
-    """Perform nmap scan on the given IP addresses and ports."""
-
-    nm = nmap.PortScanner()
-    scan_range = ",".join(ip_addresses)
-    port_range = ",".join(ports)
-
-    nm.scan(scan_range, port_range, arguments="-O")
-    return nm
+    def close(self) -> None:
+        self.conn.close()
 
 
-def parse_nmap_results(nmap_results: nmap.PortScanner) -> List[Dict[str, Any]]:
-    """Parse nmap scan results and return a list of dictionaries containing the required information."""
+class NmapScanner:
+    def __init__(self):
+        self.nm = nmap.PortScanner()
 
-    parsed_results = []
+    def scan(self, ip_addresses: List[str], ports: List[str]) -> nmap.PortScanner:
+        scan_range = ",".join(ip_addresses)
+        port_range = ",".join(ports)
 
-    for host in nmap_results.all_hosts():
-        host_info = {
-            "ip": host,
-            "host_name": nmap_results[host]["hostnames"][0]["name"] if nmap_results[host]["hostnames"] else "",
-            "os_name": nmap_results[host].get("osclass", {}).get("osfamily", ""),
-            "ports": [],
-        }
+        self.nm.scan(scan_range, port_range, arguments="-O")
+        return self.nm
 
-        for port in nmap_results[host]["tcp"]:
-            port_info=nmap_results[host]['tcp'][port]
+    def parse_results(self, nm: nmap.PortScanner) -> List[Dict[str, Any]]:
+        parsed_results = []
 
-            host_info["ports"].append({
-                "port": port,
-                "state": port_info["state"],
-                "service": port_info["name"],
-            })
+        for host in nm.all_hosts():
+            host_info = {
+                "ip": host,
+                "host_name": nm[host]["hostnames"][0]["name"] if nm[host]["hostnames"] else "",
+                "os_name": nm[host].get("osclass", {}).get("osfamily", ""),
+                "ports": [],
+            }
 
-        parsed_results.append(host_info)
+            for port_info in nm[host]["tcp"].values():
+                host_info["ports"].append({
+                    "port": port_info["portid"],
+                    "state": port_info["state"],
+                    "service": port_info["name"],
+                })
 
-    return parsed_results
+            parsed_results.append(host_info)
 
-# Main function
+        return parsed_results
+
+
+class VulnerabilityScanner:
+    def __init__(self, server: str, database: str, username: str, password: str):
+        self.conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
+
+    def fetch_ips_and_ports(self) -> List[Tuple[str, str]]:
+        conn = pyodbc.connect(self.conn_str)
+
+        cursor = conn.cursor()
+        cursor.execute("SELECT ip_address, port FROM vulnerability_view WHERE critical_vulnerability = 1")
+
+        result = [(row.ip_address, str(row.port)) for row in cursor.fetchall()]
+        conn.close()
+
+        return result
+
+
 def main() -> None:
-    if len(sys.argv) < 3:
-        print("Usage: nmap_parser.py <comma-separated ip addresses> <comma-separated ports>")
-        sys.exit(1)
+    server = "your_server_address"
+    database = "your_database_name"
+    username = "your_username"
+    password = "your_password"
 
-    ip_addresses = sys.argv[1].split(",")
-    ports = sys.argv[2].split(",")
+    vuln_scanner = VulnerabilityScanner(server, database, username, password)
+    ips_and_ports = vuln_scanner.fetch_ips_and_ports()
 
-    nmap_results = nmap_scan(ip_addresses, ports)
-    parsed_results = parse_nmap_results(nmap_results)
-    #print (parsed_results)
-    conn = create_database()
+    ip_addresses = list(set([x[0] for x in ips_and_ports]))
+    ports = list(set([x[1] for x in ips_and_ports]))
+
+    nmap_scanner = NmapScanner()
+    nmap_results = nmap_scanner.scan(ip_addresses, ports)
+    parsed_results = nmap_scanner.parse_results(nmap_results)
+
+    db_manager = DatabaseManager("nmap_results.db")
 
     for host_info in parsed_results:
-        store_results(conn, host_info["ip"], host_info["host_name"], host_info["os_name"], host_info["ports"])
+        db_manager.store_results(host_info["ip"], host_info["host_name"], host_info["os_name"], host_info["ports"])
 
-    conn.close()
+    db_manager.close()
     print("Results stored in nmap_results.db")
-
 
 if __name__ == "__main__":
     main()
